@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Debug</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="../js/db.js"></script>
+</head><body>
+<div id="log"></div>
+<script>
+(function(global){
+
+// ==== Chunk 0 (lines ~0-250) ====
+(function() {
+  try {
+
+    'use strict';
+
+    // =============== 小型 DOM 工具 ===============
+    const $ = (sel, parent) => (parent || document).querySelector(sel);
+    const $$ = (sel, parent) => Array.from((parent || document).querySelectorAll(sel));
+    const el = (tag, attrs = {}, children = []) => {
+        const n = document.createElement(tag);
+        Object.keys(attrs).forEach(k => {
+            if (k === 'class') n.className = attrs[k];
+            else if (k === 'style' && typeof attrs[k] === 'object') Object.assign(n.style, attrs[k]);
+            else if (k.startsWith('on') && typeof attrs[k] === 'function') n.addEventListener(k.slice(2), attrs[k]);
+            else if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+        });
+        (Array.isArray(children) ? children : [children]).forEach(c => {
+            if (c == null) return;
+            if (typeof c === 'string' || typeof c === 'number') n.appendChild(document.createTextNode(c));
+            else n.appendChild(c);
+        });
+        return n;
+    };
+
+    // =============== 渲染状�?===============
+    const state = {
+        sort: 'price',
+        keyword: '',
+        worldFilter: 'all',
+        typeFilter: 'all',
+        currentTab: 'shops',
+        // Three.js 场景缓存（每个卡片一个）
+        _scenes: []
+    };
+
+    // =============== 材质颜色回退方案 ===============
+    const MATERIAL_COLORS = {
+        DIAMOND:      { main: '#6de4d8', light: '#a6f4ec', dark: '#2d8c84' },
+        IRON_INGOT:   { main: '#d9d9d9', light: '#f2f2f2', dark: '#7a7a7a' },
+        GOLD_INGOT:   { main: '#fcd95a', light: '#fff0a8', dark: '#b88a1f' },
+        NETHERITE_INGOT: { main: '#5b4a4a', light: '#8d7070', dark: '#2d2020' },
+        QUARTZ:       { main: '#efe8dc', light: '#ffffff', dark: '#a69888' },
+        EMERALD:      { main: '#27c46a', light: '#6fe4a1', dark: '#127840' },
+        COAL:         { main: '#2c2c2c', light: '#5a5a5a', dark: '#000000' },
+        REDSTONE:     { main: '#ff3a3a', light: '#ff9a9a', dark: '#8b0000' },
+        LAPIS_LAZULI: { main: '#2d6fd6', light: '#6fa8ff', dark: '#15397c' },
+        OAK_PLANKS:   { main: '#a87845', light: '#d2a177', dark: '#5f3d1f' },
+        DIRT:         { main: '#8b6b4a', light: '#b29171', dark: '#5f3d1f' }
+    };
+    function colorFor(m) { return MATERIAL_COLORS[m] || { main: '#b0b0b0', light: '#e0e0e0', dark: '#444' }; }
+
+    // =============== Toast ===============
+    function showToast(msg) {
+        const t = el('div', { class: 'toast' }, msg);
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 1800);
+    }
+
+    // ============================================================
+    // #1: Three.js 3D 立方体（非交互、自动旋转）
+    // ============================================================
+    /**
+     * �?container 中渲染一�?Minecraft 立方体�?
+     * 使用 Three.js �?BoxGeometry + 6 面材质�?
+     * - �?material 已有贴图：应用贴�?
+     * - 否则：应用纯色（MATERIAL_COLORS），并添加黑色描边边�?
+     */
+    function renderCubeInContainer(container, material, textureMap) {
+        if (!global.THREE) return renderCSSFallback(container, material);
+
+        // —�?清理�?canvas —�?
+        container.innerHTML = '';
+
+        const settings = QSDB.getSettings();
+        if (settings.enable3D === false) return renderCSSFallback(container, material);
+
+        // —�?获取尺寸 —�?
+        const rect = container.getBoundingClientRect();
+        const width = Math.max(rect.width, 100);
+        const height = Math.max(rect.height, 140);
+
+        // —�?Scene / Camera / Renderer —�?
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#0f0f12');
+
+        const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+        camera.position.set(2.4, 1.8, 3.0);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // —�?光照�? 盏，让不同面有层次感，像 Minecraft）—�?
+        scene.add(new THREE.AmbientLight('#ffffff', 0.65));
+        const dir = new THREE.DirectionalLight('#ffffff', 0.6);
+        dir.position.set(3, 5, 4);
+        scene.add(dir);
+
+        // —�?纹理 / 颜色 —�?
+        const texUrl = textureMap && textureMap[material];
+        let materials6;
+
+        if (texUrl) {
+            // 使用资源包纹�?
+            const loader = new THREE.TextureLoader();
+            const tex = loader.load(
+                texUrl,
+                () => renderer.render(scene, camera),
+                undefined,
+                () => { /* 加载失败回退到颜�?*/ }
+            );
+            tex.magFilter = THREE.NearestFilter;  // 像素风！
+            tex.minFilter = THREE.NearestFilter;
+            tex.generateMipmaps = false;
+            materials6 = [
+                new THREE.MeshLambertMaterial({ map: tex }), // +X（右�?
+                new THREE.MeshLambertMaterial({ map: tex }), // -X（左�?
+                new THREE.MeshLambertMaterial({ map: tex }), // +Y（上�?
+                new THREE.MeshLambertMaterial({ map: tex }), // -Y（下�?
+                new THREE.MeshLambertMaterial({ map: tex }), // +Z（前�?
+                new THREE.MeshLambertMaterial({ map: tex })  // -Z（后�?
+            ];
+        } else {
+            // 纯色：上/�?�?使用三种色调，模�?Minecraft 立方块的光照层次
+            const c = colorFor(material);
+            const mkMat = (hex) => new THREE.MeshLambertMaterial({ color: hex });
+            const main = mkMat(c.main);
+            materials6 = [
+                main, main,             // 左右
+                mkMat(c.light),         // �?
+                mkMat(c.dark),          // �?
+                main, main              // 前后
+            ];
+        }
+
+        // —�?立方体主�?—�?
+        const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+        const cube = new THREE.Mesh(cubeGeo, materials6);
+        cube.position.set(0, 0, 0);
+        scene.add(cube);
+
+        // —�?黑色边框线（模仿 Minecraft 块的粗边）—�?
+        const edges = new THREE.EdgesGeometry(cubeGeo);
+        const edgeLine = new THREE.LineSegments(
+            edges,
+            new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 })
+        );
+        cube.add(edgeLine);
+
+        // —�?固定初始角度（模拟等距视图）—�?
+        cube.rotation.x = -0.35;
+        cube.rotation.y = 0.6;
+
+        // —�?自动旋转（非交互！仅视觉动画）—�?
+        let raf = null;
+        let last = performance.now();
+        function animate(now) {
+            const dt = (now - last) / 1000;
+            last = now;
+            cube.rotation.y += dt * 0.35;   // 每秒�?20°
+            cube.rotation.x += dt * 0.15;
+            renderer.render(scene, camera);
+            raf = requestAnimationFrame(animate);
+        }
+        raf = requestAnimationFrame(animate);
+
+        // 记录，以便之后清�?
+        state._scenes.push({ renderer, raf, cube });
+    }
+
+    /**
+     * 当没�?Three.js 或用户关�?3D 时的 CSS 回退
+     * 仍然是自动旋转的立方体，但使�?CSS 3D transforms
+     */
+    function renderCSSFallback(container, material) {
+        const c = colorFor(material);
+        const cube = el('div', { class: 'cube3d' });
+        const mkFace = (bg, tf) => {
+            const f = el('div', {
+                class: 'face',
+                style: { transform: tf, background: bg, border: '2px solid rgba(0,0,0,0.4)', width: '80px', height: '80px' }
+            });
+            cube.appendChild(f);
+        };
+        mkFace(c.main,  'translateZ(40px)');
+        mkFace(c.dark,  'rotateY(180deg) translateZ(40px)');
+        mkFace(c.dark,  'rotateY(90deg) translateZ(40px)');
+        mkFace(c.light, 'rotateY(-90deg) translateZ(40px)');
+        mkFace(c.light, 'rotateX(90deg) translateZ(40px)');
+        mkFace(c.dark,  'rotateX(-90deg) translateZ(40px)');
+
+        container.innerHTML = '';
+        container.appendChild(cube);
+    }
+
+    // =============== 清理 Three.js 场景 ===============
+    function disposeAllScenes() {
+        state._scenes.forEach(s => {
+            try { cancelAnimationFrame(s.raf); } catch {}
+            try { s.renderer.dispose(); } catch {}
+            try {
+                const dom = s.renderer.domElement;
+                if (dom && dom.parentNode) dom.parentNode.removeChild(dom);
+            } catch {}
+        });
+        state._scenes = [];
+    }
+
+    // ============================================================
+    // #2: NBT JSON 可视化（只读面板�?
+    // ============================================================
+    function renderNBTPanel(nbt) {
+        if (!nbt || Object.keys(nbt).length === 0) {
+            return el('div', {
+                class: 'nbt-panel',
+                style: { marginTop: '8px', fontSize: '11px', color: '#888', padding: '6px 8px' }
+            }, '（无 NBT 数据�?);
+        }
+        const body = el('div', { class: 'nbt-panel-body' });
+        body.textContent = JSON.stringify(nbt, null, 2);
+        const panel = el('div', { class: 'nbt-panel' }, [
+            el('div', { class: 'nbt-panel-header' }, [
+                el('strong', {}, '🧾 NBT 数据（只读）'),
+                el('span', { style: { marginLeft: 'auto', color: '#aaa', fontWeight: '400', fontSize: '10px' } }, 'Minecraft JSON-NBT')
+            ]),
+            body
+        ]);
+        return panel;
+    }
+
+    // ============================================================
+    // #3: 商店卡片（核心视觉）
+    // ============================================================
+    function renderShopCard(shop, harbor, avg, textureMap) {
+        const card = el('div', { class: 'shop-card' });
+
+        // —�?左侧�?D 立方体容�?—�?
+        const left = el('div', { class: 'shop-card-left' });
+        card.appendChild(left);
+
+        // —�?右侧：信息区 —�?
+        const right = el('div', { class: 'shop-card-right' });
+        card.appendChild(right);
+
+        // 顶部：物品名 / 类型 tag / 合理 tag
+        const header = el('div', { class: 'shop-card-header' }, [
+            el('div', { class: 'shop-title' }, [
+                el('div', { class: 'shop-name' }, shop.item_name),
+                el('small', {
+                    class: 'shop-material',
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 0</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 0: ' + e.message + '</div>';
+    console.error('Chunk 0 error:', e);
+    throw e;
+  }
+})();
+
+// ==== Chunk 1 (lines ~250-500) ====
+(function() {
+  try {
+                    style: { fontSize: '11px', color: '#666', fontFamily: 'monospace', display: 'block', marginTop: '2px' }
+                }, shop.material)
+            ]),
+            el('div', { style: { display: 'flex', gap: '4px' } }, [
+                (() => {
+                    const s = el('span', { class: 'tag-sell' }, shop.shop_type);
+                    if (shop.shop_type === 'BUYING') {
+                        s.textContent = '收购';
+                        s.style.background = '#fed7aa';
+                    } else s.textContent = '出售';
+                    return s;
+                })(),
+                (() => {
+                    const b = el('span', {
+                        class: 'badge ' + (shop.price_reasonable ? 'badge-ok' : 'badge-warn')
+                    }, shop.price_reasonable ? '�?合理' : '�?偏高');
+                    return b;
+                })()
+            ])
+        ]);
+        right.appendChild(header);
+
+        // 表格：店�?价格/堆叠/坐标/距离
+        const kv = el('table', { class: 'kv-table' });
+        function row(label, value) {
+            kv.appendChild(el('tr', {}, [
+                el('td', { style: { width: '42%', color: '#666' } }, label),
+                el('td', {}, value)
+            ]));
+        }
+        row('店主', shop.owner_name);
+        row('价格', el('span', { class: 'price-col' }, shop.price.toFixed(2)));
+        row('堆叠', String(shop.stacking_amount));
+        row('坐标', shop.world + ' · (' + shop.x + ', ' + shop.y + ', ' + shop.z + ')');
+        if (harbor) {
+            const d = QSDB.distance(shop, harbor);
+            row('距港�?, d + ' �?);
+        }
+        right.appendChild(kv);
+
+        // NBT 面板
+        right.appendChild(renderNBTPanel(shop.nbt));
+
+        // 价格对比�?
+        const compare = el('div', { class: 'shop-card-compare' });
+        const title = el('div', {
+            class: 'shop-card-compare-title',
+            style: { fontSize: '11px', fontWeight: '800', marginBottom: '4px', marginTop: '6px' }
+        }, '💹 价格历史对比');
+        compare.appendChild(title);
+
+        const barBg = el('div', {
+            style: {
+                position: 'relative', height: '14px', background: '#e5e7eb',
+                border: '2px solid #000', overflow: 'hidden'
+            }
+        });
+        if (avg.avg) {
+            const diff = shop.price - avg.avg;
+            const pct = (diff / avg.avg) * 100;
+            const clampedPct = Math.max(-50, Math.min(50, pct));
+            const barWidth = 50 + clampedPct;
+            const barFill = el('div', {
+                style: {
+                    height: '100%', width: barWidth + '%',
+                    background: pct > 5 ? '#ef4444' : pct < -5 ? '#10b981' : '#3b82f6',
+                    transition: 'width 0.3s, background 0.3s'
+                }
+            });
+            barBg.appendChild(barFill);
+            const mid = el('div', {
+                style: {
+                    position: 'absolute', top: '-3px', left: '50%',
+                    width: '2px', height: '20px', background: '#000'
+                }
+            });
+            barBg.appendChild(mid);
+        }
+        compare.appendChild(barBg);
+
+        const info = el('div', {
+            style: { fontSize: '11px', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }
+        }, [
+            el('span', {}, '当前: ' + shop.price.toFixed(2)),
+            el('span', { style: { color: '#666' } }, '均价: ' + (avg.avg ? avg.avg.toFixed(2) : '�?)),
+            (() => {
+                if (!avg.avg) return el('span', {}, '');
+                const diff = shop.price - avg.avg;
+                const pct = Math.round(diff / avg.avg * 100);
+                return el('span', {
+                    style: {
+                        color: pct > 5 ? '#ef4444' : pct < -5 ? '#10b981' : '#3b82f6',
+                        fontWeight: '800'
+                    }
+                }, (pct >= 0 ? '+' : '') + pct + '%');
+            })()
+        ]);
+        compare.appendChild(info);
+
+        const hint = el('div', {
+            style: { fontSize: '10px', color: '#888', marginTop: '3px' }
+        }, '基于 ' + avg.count + ' 条历史记�?�?中线为历史均�?);
+        compare.appendChild(hint);
+
+        right.appendChild(compare);
+
+        // —�?渲染 3D 立方体（延迟一帧，确保尺寸可用）—�?
+        setTimeout(() => renderCubeInContainer(left, shop.material, textureMap), 10);
+
+        return card;
+    }
+
+    // ============================================================
+    // #4: 商店总览页面
+    // ============================================================
+    function renderShopsOverview(root) {
+        const harbor = QSDB.getHarbor();
+        const textureMap = QSDB.getTextureMap();
+        const allShops = QSDB.getShops();
+        const worlds = ['all', ...new Set(allShops.map(s => s.world))];
+
+        root.innerHTML = '';
+        root.appendChild(el('div', { class: 'section-title' }, '商店总览 Shop Overview'));
+
+        // —�?筛选面�?—�?
+        const filterCard = el('div', { class: 'component-card' });
+
+        const chipRow = el('div', { class: 'chip-row', style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' } });
+        function mkChip(label, key, current) {
+            const b = el('button', {
+                class: 'chip' + (state.sort === key ? ' chip-active' : ''),
+                onclick: () => { state.sort = key; renderShopsGrid(); }
+            }, label);
+            return b;
+        }
+        [
+            ['价格（低 �?高）', 'price'],
+            ['距离港口（近 �?远）', 'distance'],
+            ['数量（多 �?少）', 'qty']
+        ].forEach(([l, k]) => chipRow.appendChild(mkChip(l, k)));
+        filterCard.appendChild(el('div', {
+            style: { fontSize: '12px', fontWeight: '800', marginBottom: '6px' }
+        }, '排序方式'));
+        filterCard.appendChild(chipRow);
+
+        // 搜索 / 筛�?/ 3D 开�?
+        const controls = el('div', {
+            style: {
+                display: 'grid',
+                gridTemplateColumns: '2fr 1fr 1fr 1fr',
+                gap: '12px',
+                alignItems: 'end'
+            }
+        });
+        function labelText(t) { return el('label', { style: { display: 'block', fontSize: '11px', fontWeight: '800', marginBottom: '4px' } }, t); }
+        const kwCell = el('div', {});
+        kwCell.appendChild(labelText('搜索物品 / 店主 / material'));
+        const kwInput = el('input', {
+            class: 'neo-input',
+            placeholder: '例如: DIAMOND / Steve / 钻石 �?,
+            value: state.keyword
+        });
+        kwInput.addEventListener('input', e => {
+            state.keyword = e.target.value.trim();
+            renderShopsGrid();
+        });
+        kwCell.appendChild(kwInput);
+        controls.appendChild(kwCell);
+
+        const worldCell = el('div', {});
+        worldCell.appendChild(labelText('世界'));
+        const worldSel = el('select', { class: 'neo-select' });
+        worlds.forEach(w => {
+            const opt = el('option', { value: w }, w === 'all' ? '全部' : w);
+            if (state.worldFilter === w) opt.selected = true;
+            worldSel.appendChild(opt);
+        });
+        worldSel.addEventListener('change', e => { state.worldFilter = e.target.value; renderShopsGrid(); });
+        worldCell.appendChild(worldSel);
+        controls.appendChild(worldCell);
+
+        const typeCell = el('div', {});
+        typeCell.appendChild(labelText('商店类型'));
+        const typeSel = el('select', { class: 'neo-select' });
+        ['all', 'SELLING', 'BUYING'].forEach(t => {
+            const o = el('option', { value: t }, t === 'all' ? '全部' : t === 'SELLING' ? '出售' : '收购');
+            if (state.typeFilter === t) o.selected = true;
+            typeSel.appendChild(o);
+        });
+        typeSel.addEventListener('change', e => { state.typeFilter = e.target.value; renderShopsGrid(); });
+        typeCell.appendChild(typeSel);
+        controls.appendChild(typeCell);
+
+        // 3D 开�?+ 港口信息
+        const switchCell = el('div', {});
+        switchCell.appendChild(labelText('显示选项'));
+        const s3 = QSDB.getSettings();
+        const sw = el('label', { class: 'neo-switch', style: { display: 'inline-flex', marginBottom: '6px' } });
+        const swInput = el('input', { type: 'checkbox' });
+        if (s3.enable3D !== false) swInput.checked = true;
+        swInput.addEventListener('change', e => {
+            const s = QSDB.getSettings();
+            s.enable3D = e.target.checked;
+            QSDB.setSettings(s);
+            renderShopsGrid();
+            showToast('3D 渲染: ' + (e.target.checked ? '开�? : '关闭（显�?2D 色块�?));
+        });
+        const slider = el('span', { class: 'neo-slider' });
+        sw.appendChild(swInput);
+        sw.appendChild(slider);
+        switchCell.appendChild(sw);
+        switchCell.appendChild(el('span', {
+            style: { fontSize: '11px', marginLeft: '8px', color: '#666' }
+        }, s3.enable3D === false ? '2D 色块' : '3D 立方�?));
+        controls.appendChild(switchCell);
+
+        filterCard.appendChild(controls);
+
+        const harborInfo = el('div', {
+            style: { marginTop: '10px', fontSize: '12px', color: '#555' }
+        }, [
+            el('span', {}, '🏠 港口坐标: '),
+            el('strong', {}, harbor ? harbor.name + ' (' + harbor.x + ', ' + harbor.y + ', ' + harbor.z + ')' : '未设�?),
+            el('span', {}, ' �?'),
+            el('a', {
+                style: { cursor: 'pointer', textDecoration: 'underline', color: '#3b82f6', fontWeight: '700' },
+                onclick: () => switchTab('admin')
+            }, '在管理后台设�?)
+        ]);
+        filterCard.appendChild(harborInfo);
+        root.appendChild(filterCard);
+
+        // —�?各物品均价卡�?—�?
+        const avgCard = el('div', { class: 'component-card' });
+        avgCard.appendChild(el('h3', {}, '📊 按物品分类的历史均价'));
+        const grid = el('div', {
+            style: {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                gap: '10px',
+                marginTop: '10px'
+            }
+        });
+        const matMap = {};
+        allShops.forEach(s => {
+            if (!matMap[s.material]) {
+                matMap[s.material] = { name: s.item_name, count: 0, prices: [] };
+            }
+            matMap[s.material].count++;
+            matMap[s.material].prices.push(s.price);
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 1</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 1: ' + e.message + '</div>';
+    console.error('Chunk 1 error:', e);
+    throw e;
+  }
+})();
+
+// ==== Chunk 2 (lines ~500-750) ====
+(function() {
+  try {
+        });
+        Object.keys(matMap).sort().forEach(mat => {
+            const row = matMap[mat];
+            const prices = row.prices;
+            const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+            const min = Math.min(...prices);
+            const max = Math.max(...prices);
+            const c = colorFor(mat);
+            const cell = el('div', {
+                style: {
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    border: '2px dashed #000', padding: '8px 10px', background: '#fafafa'
+                }
+            });
+            cell.appendChild(el('div', {
+                style: {
+                    width: '30px', height: '30px', background: c.main,
+                    border: '2px solid #000', boxShadow: '2px 2px 0 #000', flexShrink: 0
+                }
+            }));
+            cell.appendChild(el('div', { style: { minWidth: 0 } }, [
+                el('div', { style: { fontSize: '13px', fontWeight: '800', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, row.name),
+                el('div', {
+                    style: { fontSize: '11px', color: '#555', fontFamily: 'monospace' }
+                }, mat + ' �?均价: ' + avg.toFixed(2) + '  范围: ' + min.toFixed(2) + '�? + max.toFixed(2))
+            ]));
+            grid.appendChild(cell);
+        });
+        avgCard.appendChild(grid);
+        root.appendChild(avgCard);
+
+        // —�?商店卡片网格（内容由 renderShopsGrid 填充）—�?
+        const gridWrapper = el('div', { id: 'shop-card-grid', style: { marginTop: '20px' } });
+        root.appendChild(gridWrapper);
+
+        renderShopsGrid();
+    }
+
+    function renderShopsGrid() {
+        const harbor = QSDB.getHarbor();
+        const textureMap = QSDB.getTextureMap();
+        let shops = QSDB.getShops().slice();
+
+        if (state.keyword) {
+            const k = state.keyword.toLowerCase();
+            shops = shops.filter(s =>
+                (s.item_name || '').toLowerCase().includes(k) ||
+                (s.owner_name || '').toLowerCase().includes(k) ||
+                (s.material || '').toLowerCase().includes(k)
+            );
+        }
+        if (state.worldFilter !== 'all') shops = shops.filter(s => s.world === state.worldFilter);
+        if (state.typeFilter !== 'all') shops = shops.filter(s => s.shop_type === state.typeFilter);
+
+        if (state.sort === 'price') shops.sort((a, b) => a.price - b.price);
+        else if (state.sort === 'qty') shops.sort((a, b) => b.stacking_amount - a.stacking_amount);
+        else if (state.sort === 'distance' && harbor) shops.sort((a, b) => QSDB.distance(a, harbor) - QSDB.distance(b, harbor));
+
+        // —�?清理并重新渲�?—�?
+        const wrapper = $('#shop-card-grid');
+        if (!wrapper) return;
+
+        // 清理 Three.js 场景
+        state._scenes.forEach(s => {
+            try { cancelAnimationFrame(s.raf); s.renderer.dispose(); } catch {}
+        });
+        state._scenes = [];
+
+        wrapper.innerHTML = '';
+
+        if (!shops.length) {
+            wrapper.appendChild(el('div', {
+                class: 'component-card',
+                style: { textAlign: 'center', padding: '40px' }
+            }, [
+                el('div', { style: { fontSize: '22px', marginBottom: '8px' } }, '🔍 没有符合条件的商�?),
+                el('div', { style: { fontSize: '13px', color: '#666' } }, '试试清空搜索词或切换筛选条�?)
+            ]));
+            return;
+        }
+
+        wrapper.appendChild(el('div', {
+            style: { margin: '4px 0 12px 2px', fontSize: '13px' }
+        }, '�?' + el('strong', {}, String(shops.length)) + ' 家商�?· 当前排序�? +
+           el('strong', {}, state.sort === 'price' ? '价格（低→高�? :
+                state.sort === 'qty' ? '数量（多→少�? : '距离港口（近→远�?)));
+
+        const grid = el('div', {
+            id: 'shop-card-grid-inner',
+            style: {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(460px, 1fr))',
+                gap: '18px'
+            }
+        });
+        shops.forEach(s => {
+            const avg = QSDB.computeAvgForMaterial(s.material);
+            grid.appendChild(renderShopCard(s, harbor, avg, textureMap));
+        });
+        wrapper.appendChild(grid);
+    }
+
+    // ============================================================
+    // #5: 管理后台
+    // ============================================================
+    function renderAdmin(root) {
+        const harbor = QSDB.getHarbor() || { x: 0, y: 64, z: 0, name: '主港�? };
+        const settings = QSDB.getSettings();
+        const ann = QSDB.getAnnouncements();
+
+        root.innerHTML = '';
+        root.appendChild(el('div', { class: 'section-title' }, '管理后台 Admin'));
+
+        // —�?3D 渲染开�?—�?
+        const c1 = el('div', { class: 'component-card' });
+        c1.appendChild(el('h3', {}, '�?3D 渲染控制（影响每张卡片）'));
+        const l = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '10px' } });
+        const cbox = el('input', { type: 'checkbox' });
+        if (settings.enable3D !== false) cbox.checked = true;
+        cbox.addEventListener('change', e => {
+            const s = QSDB.getSettings();
+            s.enable3D = e.target.checked;
+            QSDB.setSettings(s);
+            showToast('已记�? 3D 渲染 ' + (e.target.checked ? '启用' : '禁用'));
+        });
+        const slider = el('span', { class: 'neo-slider' });
+        l.appendChild(el('label', { class: 'neo-switch', style: { display: 'inline-flex' } }, [cbox, slider]));
+        l.appendChild(el('span', { style: { fontSize: '13px' } }, '启用三维渲染（关闭后使用 2D 色块，节省资源）'));
+        c1.appendChild(l);
+        root.appendChild(c1);
+
+        // —�?港口坐标 —�?
+        const c2 = el('div', { class: 'component-card' });
+        c2.appendChild(el('h3', {}, '📍 港口坐标（影�?距离港口"排序�?));
+        const harborGrid = el('div', {
+            style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }
+        });
+        const mkInput = (label, val, id) => {
+            const w = el('div', {});
+            w.appendChild(el('label', { style: { display: 'block', fontSize: '11px', fontWeight: '800', marginBottom: '4px' } }, label));
+            const i = el('input', { class: 'neo-input', value: val, id: id });
+            w.appendChild(i);
+            return { wrapper: w, input: i };
+        };
+        const nameIn = mkInput('港口�?, harbor.name || '主港�?, 'harbor-name');
+        const xIn = mkInput('X 坐标', String(harbor.x), 'harbor-x');
+        const yIn = mkInput('Y 坐标', String(harbor.y), 'harbor-y');
+        const zIn = mkInput('Z 坐标', String(harbor.z), 'harbor-z');
+        harborGrid.appendChild(nameIn.wrapper);
+        harborGrid.appendChild(xIn.wrapper);
+        harborGrid.appendChild(yIn.wrapper);
+        harborGrid.appendChild(zIn.wrapper);
+        c2.appendChild(harborGrid);
+        const saveBtn = el('button', {
+            class: 'neo-btn primary',
+            onclick: () => {
+                QSDB.setHarbor({
+                    name: nameIn.input.value,
+                    x: Number(xIn.input.value) || 0,
+                    y: Number(yIn.input.value) || 0,
+                    z: Number(zIn.input.value) || 0
+                });
+                showToast('港口坐标已保�?);
+            }
+        }, '保存港口坐标');
+        c2.appendChild(saveBtn);
+        root.appendChild(c2);
+
+        // —�?材质包管�?—�?
+        const c3 = el('div', { class: 'component-card' });
+        c3.appendChild(el('h3', {}, '🎨 材质包（Minecraft Resource Pack�?));
+        c3.appendChild(el('div', { style: { fontSize: '12px', marginBottom: '12px', color: '#555' } },
+            '支持: 标准材质�?ZIP（需包含 assets/minecraft/textures/block/*.png），或本地目录，或单�?PNG URL 映射�?
+        ));
+
+        const rpRow = el('div', {
+            style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }
+        });
+
+        // 方式 1: ZIP
+        const zipCard = el('div', {
+            style: { border: '3px dashed #000', padding: '12px', background: '#fffbe6' }
+        });
+        zipCard.appendChild(el('div', { style: { fontWeight: '800', fontSize: '13px', marginBottom: '6px' } }, '方式 1: ZIP 文件'));
+        const fi = el('input', { type: 'file', accept: '.zip' });
+        fi.addEventListener('change', e => handleZipUpload(e.target.files[0]));
+        zipCard.appendChild(fi);
+        zipCard.appendChild(el('div', { style: { fontSize: '11px', color: '#666', marginTop: '6px' } },
+            '查找路径: assets/minecraft/textures/block/<MATERIAL>.png（大小写不敏感）'));
+        rpRow.appendChild(zipCard);
+
+        // 方式 2: 目录
+        const dirCard = el('div', {
+            style: { border: '3px dashed #000', padding: '12px', background: '#e6f6e6' }
+        });
+        dirCard.appendChild(el('div', { style: { fontWeight: '800', fontSize: '13px', marginBottom: '6px' } }, '方式 2: 纹理目录'));
+        const di = el('input', {
+            type: 'file', multiple: '', directory: '', webkitdirectory: ''
+        });
+        di.addEventListener('change', e => handleDirectoryUpload(Array.from(e.target.files)));
+        dirCard.appendChild(di);
+        dirCard.appendChild(el('div', { style: { fontSize: '11px', color: '#666', marginTop: '6px' } },
+            '选择包含所�?.png 贴图的目录，文件名必须与 material 名一致（�?diamond.png�?));
+        rpRow.appendChild(dirCard);
+
+        // 方式 3: URL 映射（手动输入）
+        const urlCard = el('div', {
+            style: { border: '3px dashed #000', padding: '12px', background: '#e6e6ff' }
+        });
+        urlCard.appendChild(el('div', { style: { fontWeight: '800', fontSize: '13px', marginBottom: '6px' } }, '方式 3: 粘贴 PNG URL 映射'));
+        const urlMat = el('input', {
+            class: 'neo-input', placeholder: 'Material 名（�? DIAMOND�?
+        });
+        const urlUrl = el('input', {
+            class: 'neo-input', placeholder: '贴图 URL（png / jpg�?
+        });
+        const urlBtn = el('button', {
+            class: 'neo-btn primary',
+            style: { padding: '6px 12px', fontSize: '12px' },
+            onclick: () => {
+                if (!urlMat.value.trim() || !urlUrl.value.trim()) {
+                    showToast('请填�?Material �?�?贴图 URL'); return;
+                }
+                const map = QSDB.getTextureMap();
+                map[urlMat.value.trim().toUpperCase()] = urlUrl.value.trim();
+                QSDB.setTextureMap(map);
+                urlMat.value = ''; urlUrl.value = '';
+                showToast('已添�? ' + urlMat.value);
+                refreshTexturePreview();
+            }
+        }, '添加映射');
+        urlCard.appendChild(urlMat);
+        urlCard.appendChild(urlUrl);
+        urlCard.appendChild(urlBtn);
+        rpRow.appendChild(urlCard);
+
+        c3.appendChild(rpRow);
+
+        // —�?材质包状�?& 预览 —�?
+        const status = el('div', {
+            class: 'resource-pack-status',
+            style: {
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '10px 12px', border: '2px dashed #000',
+                background: '#fafafa', fontSize: '12px', marginTop: '16px'
+            }
+        });
+        const statusDot = el('div', {
+            style: {
+                width: '10px', height: '10px', borderRadius: '50%', background: '#ef4444',
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 2</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 2: ' + e.message + '</div>';
+    console.error('Chunk 2 error:', e);
+    throw e;
+  }
+})();
+
+// ==== Chunk 3 (lines ~750-1000) ====
+(function() {
+  try {
+                display: 'inline-block'
+            }
+        });
+        const statusText = el('span', {}, '');
+        status.appendChild(statusDot);
+        status.appendChild(statusText);
+        c3.appendChild(status);
+
+        // 预览网格
+        const previewWrap = el('div', { id: 'texture-preview', style: { marginTop: '12px' } });
+        c3.appendChild(previewWrap);
+
+        // 清空贴图缓存的按�?
+        const clearTextures = el('button', {
+            class: 'neo-btn',
+            onclick: () => {
+                QSDB.clearTextureMap();
+                refreshTexturePreview();
+                showToast('已清空材质包贴图');
+            }
+        }, '🗑 清空所有贴�?);
+        c3.appendChild(clearTextures);
+
+        root.appendChild(c3);
+
+        // —�?公告管理 —�?
+        const c4 = el('div', { class: 'component-card' });
+        c4.appendChild(el('h3', {}, '📢 公告管理（支持富文本�?));
+        const annTitle = el('input', { class: 'neo-input', placeholder: '公告标题�? });
+        const annContent = el('div', {
+            contenteditable: 'true',
+            style: {
+                border: '3px solid #000', padding: '12px', minHeight: '80px',
+                background: '#fff', marginBottom: '8px', fontSize: '14px'
+            }
+        });
+        const toolbar = el('div', {
+            style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }
+        });
+        const mkBtn = (label, fn) => el('button', {
+            class: 'neo-btn', style: { padding: '5px 10px', margin: 0 },
+            onclick: fn
+        }, label);
+        toolbar.appendChild(mkBtn('B 加粗', () => document.execCommand('bold', false, null)));
+        toolbar.appendChild(mkBtn('I 斜体', () => document.execCommand('italic', false, null)));
+        toolbar.appendChild(mkBtn('U 下划�?, () => document.execCommand('underline', false, null)));
+        toolbar.appendChild(mkBtn('🔗 链接', () => {
+            const u = prompt('请输入链�?URL:');
+            if (u) document.execCommand('createLink', false, u);
+        }));
+        toolbar.appendChild(mkBtn('🖼 图片', () => {
+            const u = prompt('请输入图�?URL:');
+            if (u) document.execCommand('insertImage', false, u);
+        }));
+        c4.appendChild(annTitle);
+        c4.appendChild(toolbar);
+        c4.appendChild(annContent);
+        const saveAnnBtn = el('button', {
+            class: 'neo-btn primary',
+            onclick: () => {
+                if (!annTitle.value.trim()) { showToast('请输入标�?); return; }
+                QSDB.saveAnnouncement({
+                    title: annTitle.value.trim(),
+                    content: annContent.innerHTML
+                });
+                annTitle.value = '';
+                annContent.innerHTML = '';
+                renderAnnList();
+                showToast('公告已发�?);
+            }
+        }, '发布公告');
+        c4.appendChild(saveAnnBtn);
+
+        const annList = el('div', { id: 'ann-list', style: { marginTop: '16px' } });
+        c4.appendChild(annList);
+        root.appendChild(c4);
+
+        // —�?请求日志 —�?
+        const c5 = el('div', { class: 'component-card' });
+        c5.appendChild(el('h3', {}, '📜 最�?API 请求日志（本浏览器）'));
+        const table = el('table', { class: 'data-table' });
+        table.innerHTML = '<thead><tr><th>时间</th><th>成功</th><th>新增</th><th>更新</th><th>总数</th><th>错误</th></tr></thead>';
+        const tbody = el('tbody');
+        const log = QSDB.getFetchLog().slice().reverse();
+        if (!log.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">暂无日志</td></tr>';
+        } else {
+            log.forEach(l => {
+                const tr = el('tr');
+                tr.innerHTML =
+                    '<td>' + new Date(l.ts).toLocaleString() + '</td>' +
+                    '<td>' + (l.ok ? '�? : '�?) + '</td>' +
+                    '<td>' + (l.added || 0) + '</td>' +
+                    '<td>' + (l.updated || 0) + '</td>' +
+                    '<td>' + (l.total || '�?) + '</td>' +
+                    '<td style="color:#ef4444;">' + (l.error || '�?) + '</td>';
+                tbody.appendChild(tr);
+            });
+        }
+        table.appendChild(tbody);
+        c5.appendChild(table);
+        root.appendChild(c5);
+
+        // 初始渲染贴图预览 / 公告
+        refreshTexturePreview();
+        renderAnnList();
+
+        function renderAnnList() {
+            const items = QSDB.getAnnouncements();
+            annList.innerHTML = '';
+            if (!items.length) {
+                annList.appendChild(el('div', { style: { color: '#888', fontSize: '12px' } }, '暂无公告'));
+                return;
+            }
+            items.forEach(a => {
+                const item = el('div', {
+                    style: {
+                        background: '#fffbe6', border: '3px solid #000',
+                        boxShadow: '4px 4px 0 #000', padding: '12px 14px', marginBottom: '10px'
+                    }
+                });
+                const head = el('div', {
+                    style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }
+                });
+                head.appendChild(el('div', { style: { fontWeight: '800', fontSize: '15px' } }, a.title));
+                const actions = el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } });
+                actions.appendChild(el('span', { style: { fontSize: '11px', color: '#666' } },
+                    new Date(a.created_at).toLocaleString()));
+                const del = el('button', {
+                    class: 'neo-btn danger',
+                    style: { padding: '4px 10px', margin: 0, fontSize: '11px' },
+                    onclick: () => {
+                        if (!confirm('确定删除该公告？')) return;
+                        QSDB.deleteAnnouncement(a.id);
+                        renderAnnList();
+                        showToast('已删�?);
+                    }
+                }, '删除');
+                actions.appendChild(del);
+                head.appendChild(actions);
+                item.appendChild(head);
+                const body = el('div', { style: { fontSize: '13px' } });
+                body.innerHTML = a.content || '';
+                item.appendChild(body);
+                annList.appendChild(item);
+            });
+        }
+
+        function refreshTexturePreview() {
+            const map = QSDB.getTextureMap();
+            const keys = Object.keys(map);
+            const text = '已加载材质包�? +
+                (keys.length ? '�?' + keys.length + ' 张贴�?· ' + keys.slice(0, 4).join(', ') + (keys.length > 4 ? '�? : '') : '（未加载�?;
+            statusText.textContent = text;
+            statusDot.style.background = keys.length ? '#10b981' : '#ef4444';
+
+            // 预览网格
+            previewWrap.innerHTML = '';
+            if (!keys.length) return;
+
+            const preGrid = el('div', {
+                style: {
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                    gap: '8px'
+                }
+            });
+            keys.sort().forEach(k => {
+                const cell = el('div', {
+                    style: {
+                        border: '2px solid #000', padding: '6px', textAlign: 'center',
+                        background: '#fff', boxShadow: '2px 2px 0 #000'
+                    }
+                });
+                const img = el('img', {
+                    src: map[k],
+                    alt: k,
+                    style: {
+                        width: '48px', height: '48px',
+                        imageRendering: 'pixelated',
+                        background: '#ddd',
+                        display: 'block',
+                        margin: '0 auto 4px',
+                        border: '1px solid #000'
+                    }
+                });
+                cell.appendChild(img);
+                cell.appendChild(el('span', {
+                    style: { fontSize: '10px', fontWeight: '700', fontFamily: 'monospace', display: 'block' }
+                }, k));
+                preGrid.appendChild(cell);
+            });
+            previewWrap.appendChild(preGrid);
+        }
+
+        // —�?材质�? ZIP 解析 —�?
+        function handleZipUpload(file) {
+            if (!file) return;
+            if (!global.JSZip) { showToast('JSZip 未加载，请检查网�?); return; }
+            showToast('正在解析 ZIP: ' + file.name);
+
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                JSZip.loadAsync(ev.target.result).then(zip => {
+                    const map = QSDB.getTextureMap();
+                    const promises = [];
+                    zip.forEach((relPath, file) => {
+                        if (!relPath.match(/\.(png|jpg|jpeg)$/i)) return;
+                        // 标准�? 只取文件名（不含路径和扩展名）作�?key
+                        const name = relPath.split('/').pop()
+                            .replace(/\.(png|jpg|jpeg)$/i, '')
+                            .toUpperCase();
+                        // 将路径也提取�?material 部分 (assets/minecraft/textures/block/XXXX.png)
+                        const parts = relPath.toLowerCase().split(/[\\/]/);
+                        const folderIdx = parts.indexOf('textures');
+                        let mat = name;
+                        if (folderIdx >= 0 && parts[folderIdx + 1] === 'block') {
+                            mat = parts[folderIdx + 2]
+                                .replace(/\.(png|jpg|jpeg)$/i, '')
+                                .toUpperCase()
+                                .replace(/-/g, '_');
+                        } else {
+                            mat = name.replace(/-/g, '_');
+                        }
+                        promises.push(
+                            file.async('base64').then(data => {
+                                const mime = relPath.match(/\.png$/i) ? 'image/png' : 'image/jpeg';
+                                map[mat] = 'data:' + mime + ';base64,' + data;
+                            })
+                        );
+                    });
+                    Promise.all(promises).then(() => {
+                        QSDB.setTextureMap(map);
+                        refreshTexturePreview();
+                        showToast('已加�?' + Object.keys(map).length + ' 张贴�?);
+                    });
+                }).catch(err => {
+                    showToast('ZIP 解析失败: ' + err.message);
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // —�?材质�? 目录上传 —�?
+        function handleDirectoryUpload(files) {
+            if (!files || !files.length) return;
+            showToast('正在读取 ' + files.length + ' 个文件�?);
+            const map = QSDB.getTextureMap();
+            let loaded = 0;
+            files.forEach(file => {
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 3</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 3: ' + e.message + '</div>';
+    console.error('Chunk 3 error:', e);
+    throw e;
+  }
+})();
+
+// ==== Chunk 4 (lines ~1000-1250) ====
+(function() {
+  try {
+                if (!file.name.match(/\.(png|jpg|jpeg)$/i)) return;
+                const mat = file.name
+                    .replace(/\.(png|jpg|jpeg)$/i, '')
+                    .toUpperCase()
+                    .replace(/-/g, '_');
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const mime = file.name.match(/\.png$/i) ? 'image/png' : 'image/jpeg';
+                    map[mat] = ev.target.result;
+                    loaded++;
+                    if (loaded === files.length) {
+                        QSDB.setTextureMap(map);
+                        refreshTexturePreview();
+                        showToast('已加�?' + Object.keys(map).length + ' 张贴�?);
+                    }
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+    }
+
+    // ============================================================
+    // #6: 数据管理（导�?导出�?
+    // ============================================================
+    function renderDataIO(root) {
+        root.innerHTML = '';
+        root.appendChild(el('div', { class: 'section-title' }, '数据管理 Data I/O'));
+
+        // —�?导入 —�?
+        const c1 = el('div', { class: 'component-card' });
+        c1.appendChild(el('h3', {}, '📥 导入 QuickShop JSON'));
+        c1.appendChild(el('div', { style: { fontSize: '12px', marginBottom: '10px', color: '#555' } },
+            '支持: 单对�?/ 数组 / { shops: [...] } 包裹。所有导入会自动合并到本地数据库，并追加到价格历史�?
+        ));
+
+        const importGrid = el('div', {
+            style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }
+        });
+
+        // 文件
+        const fileCell = el('div', {
+            style: { border: '2px dashed #000', padding: '12px', background: '#f0f8ff' }
+        });
+        fileCell.appendChild(el('div', { style: { fontSize: '12px', fontWeight: '800', marginBottom: '6px' } }, '方式 1: JSON 文件'));
+        const fi = el('input', { type: 'file', accept: '.json, application/json' });
+        fi.addEventListener('change', e => {
+            const f = e.target.files[0];
+            if (!f) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    const r = QSDB.ingest(data);
+                    showToast(r.ok ? '成功导入: 新增 ' + r.added + ', 更新 ' + r.updated : '导入失败');
+                } catch (err) { showToast('JSON 解析失败: ' + err.message); }
+            };
+            reader.readAsText(f);
+        });
+        fileCell.appendChild(fi);
+        importGrid.appendChild(fileCell);
+
+        // 粘贴
+        const pasteCell = el('div', {
+            style: { border: '2px dashed #000', padding: '12px', background: '#fff8dc' }
+        });
+        pasteCell.appendChild(el('div', { style: { fontSize: '12px', fontWeight: '800', marginBottom: '6px' } }, '方式 2: 粘贴 JSON'));
+        const pasteArea = el('textarea', {
+            class: 'neo-input', style: { width: '100%', minHeight: '80px', fontFamily: 'monospace', fontSize: '11px' },
+            placeholder: '粘贴 JSON 到这�?..'
+        });
+        pasteCell.appendChild(pasteArea);
+        pasteCell.appendChild(el('button', {
+            class: 'neo-btn primary',
+            style: { padding: '6px 12px', fontSize: '12px', marginTop: '6px' },
+            onclick: () => {
+                if (!pasteArea.value.trim()) { showToast('请先粘贴 JSON'); return; }
+                try {
+                    const r = QSDB.ingest(JSON.parse(pasteArea.value));
+                    showToast(r.ok ? '成功导入: 新增 ' + r.added + ', 更新 ' + r.updated : '导入失败');
+                } catch (err) { showToast('JSON 解析失败: ' + err.message); }
+            }
+        }, '解析并导�?));
+        importGrid.appendChild(pasteCell);
+
+        // 模拟追加（用于测试价格历史）
+        const demoCell = el('div', {
+            style: { border: '2px dashed #000', padding: '12px', background: '#f0fff0' }
+        });
+        demoCell.appendChild(el('div', { style: { fontSize: '12px', fontWeight: '800', marginBottom: '6px' } }, '方式 3: 模拟数据'));
+        demoCell.appendChild(el('div', { style: { fontSize: '11px', color: '#666', marginBottom: '8px' } },
+            '用当前商店的随机价格追加一批历史记录，用于测试"价格对比�?的效果�?));
+        demoCell.appendChild(el('button', {
+            class: 'neo-btn',
+            style: { padding: '6px 12px', fontSize: '12px' },
+            onclick: () => {
+                const demo = QSDB.getShops().map(s => ({
+                    ...s,
+                    price: +(s.price * (0.85 + Math.random() * 0.35)).toFixed(2)
+                }));
+                const r = QSDB.ingest(demo);
+                showToast('已追加样�? 更新 ' + r.updated + ' 条历�?);
+            }
+        }, '追加一批历史样�?));
+        importGrid.appendChild(demoCell);
+
+        c1.appendChild(importGrid);
+
+        const ioMsg = el('div', { id: 'io-msg', style: { marginTop: '10px', fontSize: '12px', color: '#555' } });
+        c1.appendChild(ioMsg);
+        root.appendChild(c1);
+
+        // —�?导出 / 清空 —�?
+        const c2 = el('div', { class: 'component-card' });
+        c2.appendChild(el('h3', {}, '📤 导出 / 清空存档'));
+        c2.appendChild(el('div', { style: { fontSize: '12px', marginBottom: '10px', color: '#555' } },
+            '导出内容包括: 商店列表 · 价格历史 · 港口坐标 · 公告 · 设置 · 贴图映射'
+        ));
+        const expBtn = el('button', {
+            class: 'neo-btn primary',
+            onclick: () => {
+                const blob = new Blob([JSON.stringify(QSDB.exportAll(), null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = el('a', { href: url, download: 'qshop-backup-' + Date.now() + '.json' });
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('数据已导�?);
+            }
+        }, '📥 导出全部数据 (JSON)');
+        c2.appendChild(expBtn);
+
+        const clearBtn = el('button', {
+            class: 'neo-btn danger',
+            style: { marginLeft: '8px' },
+            onclick: () => {
+                if (!confirm('确认清空全部本地数据？此操作不可恢复�?)) return;
+                QSDB.clearAll();
+                location.reload();
+            }
+        }, '�?清空本地数据�?);
+        c2.appendChild(clearBtn);
+        root.appendChild(c2);
+
+        // —�?当前状�?—�?
+        const c3 = el('div', { class: 'component-card' });
+        c3.appendChild(el('h3', {}, '📊 当前本地数据库状�?));
+
+        const shops = QSDB.getShops();
+        const hist = QSDB.read('qshop_price_history', {});
+        const tex = QSDB.getTextureMap();
+
+        const statGrid = el('div', {
+            style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }
+        });
+        const mkStat = (label, big) => el('div', {
+            style: {
+                background: '#fff', border: '3px solid #000', boxShadow: '3px 3px 0 #000',
+                padding: '10px', fontSize: '12px'
+            }
+        }, [
+            el('div', {}, label),
+            el('div', {
+                style: { fontSize: '24px', fontWeight: '900', marginTop: '4px', color: '#3b82f6' }
+            }, String(big))
+        ]);
+        statGrid.appendChild(mkStat('商店总数', shops.length));
+        statGrid.appendChild(mkStat('不同物品', new Set(shops.map(s => s.material)).size));
+        statGrid.appendChild(mkStat('店主数量', new Set(shops.map(s => s.owner_name)).size));
+        statGrid.appendChild(mkStat('历史价格条目', Object.keys(hist).length));
+        statGrid.appendChild(mkStat('贴图已加�?, Object.keys(tex).length));
+        statGrid.appendChild(mkStat('请求日志', QSDB.getFetchLog().length));
+        c3.appendChild(statGrid);
+        root.appendChild(c3);
+
+        // —�?API 示例 —�?
+        const c4 = el('div', { class: 'component-card' });
+        c4.appendChild(el('h3', {}, '🔌 API 接入示例'));
+        c4.appendChild(el('div', { style: { fontSize: '12px', marginBottom: '8px', color: '#555' } },
+            '只需�?API 返回�?JSON 喂给 QSDB.ingest(data)，然后切换到商店总览即可刷新页面�?
+        ));
+        const codeBlock = el('pre', {
+            class: 'code-editor',
+            style: {
+                fontFamily: 'monospace', fontSize: '11px',
+                background: '#1f1f1f', color: '#e5e7eb',
+                padding: '12px', border: '3px solid #000',
+                whiteSpace: 'pre', overflowX: 'auto', lineHeight: '1.5'
+            }
+        });
+        codeBlock.textContent =
+`// 方式 A: 对接真实 API
+fetch('/api/shops')
+  .then(r => r.json())
+  .then(data => {
+     const r = QSDB.ingest(data);
+     console.log('新增:' + r.added + ' 更新:' + r.updated);
+     QS_UI.switchTab('shops');
+  });
+
+// 方式 B: 控制台直接注入（用于测试�?
+QSDB.ingest([{
+  shop_id: 999, owner_name: "Test",
+  material: "DIAMOND", item_name: "钻石",
+  price: 45, stacking_amount: 64,
+  shop_type: "SELLING", world: "world",
+  x: 100, y: 64, z: -200,
+  price_reasonable: true,
+  nbt: { display: { Name: '{"text":"钻石"}' },
+         Enchantments: [{ id: "fortune", lvl: 2 }] }
+}]);
+
+// 方式 C: 手动操作
+QSDB.getShops()          // 读取全部商店
+QSDB.computeAvgForMaterial('DIAMOND')  // 计算某物品的历史均价
+QSDB.getHarbor()         // 读取港口坐标
+QSDB.setTextureMap(map)  // 写入自定义贴图映射`;
+        c4.appendChild(codeBlock);
+        root.appendChild(c4);
+    }
+
+    // ============================================================
+    // #7: Tab 切换主路�?
+    // ============================================================
+    function switchTab(tab) {
+        state.currentTab = tab;
+        $$('.nav-item').forEach(n => {
+            n.classList.toggle('active', n.dataset.tab === tab);
+        });
+        const area = $('#content-area');
+        area.innerHTML = '';
+
+        // 切换 tab 时先清理�?Three.js 场景
+        disposeAllScenes();
+
+        if (tab === 'shops') renderShopsOverview(area);
+        else if (tab === 'admin') renderAdmin(area);
+        else if (tab === 'data') renderDataIO(area);
+    }
+
+    // =============== 启动 ===============
+    document.addEventListener('DOMContentLoaded', () => {
+        // 设置侧边�?nav-item �?data-tab
+        $$('.nav-item').forEach(n => {
+            n.addEventListener('click', () => {
+                const tab = n.dataset.tab || n.getAttribute('data-tab');
+                switchTab(tab);
+            });
+        });
+        switchTab('shops');
+    });
+
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 4</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 4: ' + e.message + '</div>';
+    console.error('Chunk 4 error:', e);
+    throw e;
+  }
+})();
+
+// ==== Chunk 5 (lines ~1250-1500) ====
+(function() {
+  try {
+    // =============== 对外暴露 API ===============
+    global.QS_UI = {
+        switchTab: switchTab,
+        showToast: showToast,
+        renderShopsOverview: renderShopsOverview,
+        renderAdmin: renderAdmin,
+        renderDataIO: renderDataIO
+    };
+
+    document.getElementById('log').innerHTML += '<div style="color:green">OK chunk 5</div>';
+  } catch(e) {
+    document.getElementById('log').innerHTML += '<div style="color:red">ERR chunk 5: ' + e.message + '</div>';
+    console.error('Chunk 5 error:', e);
+    throw e;
+  }
+})();
+
+})(window);
+</script>
+</body></html>

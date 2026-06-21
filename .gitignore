@@ -1,0 +1,82 @@
+# ===== QshopWebUI — 敏感数据 / 临时文件 / 日志 忽略规则 =====
+
+# —— 环境变量与本地配置 ——
+.env
+.env.*
+!.env.example
+
+# —— 日志与运行时输出 ——
+*.log
+*.log.*
+*.out
+*.err
+server_out.log
+server_err.log
+server-start.log
+server-stderr.log
+server-stdout.log
+server-err.log
+_server.log
+_server.err
+debug.log
+final_output.txt
+
+# —— 数据库 / 本地数据存储 ——
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.pgdump
+*.sql
+qshop.db
+*.bak
+
+# —— 备份与缓存 ——
+backups/
+backup/
+cache/
+tmp/
+temp/
+logs/
+reports/
+.pnpm-store/
+
+# —— Node.js / npm 运行时 ——
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# —— 依赖锁定（如不想发布可启用）——
+# package-lock.json
+# yarn.lock
+
+# —— 编辑器与 IDE ——
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# —— 临时 / 调试脚本（以下划线开头的文件或 _ 开头的脚本）——
+_*.js
+_*.txt
+_*.log
+_server.err
+_server.log
+
+# —— 系统构建产物 ——
+dist/
+build/
+*.pid
+*.seed
+
+# —— 本地服务配置与二进制（不应提交）——
+my.ini
+QSFilterPlugin-*.jar
+install_output.txt
+mysql_init_err.txt
+mysql_init_out.txt

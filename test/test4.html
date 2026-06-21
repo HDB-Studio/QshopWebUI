@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test inline</title></head>
+<body>
+<div id="out">Test</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="../js/db.js"></script>
+<script>
+(function(global) {
+    'use strict';
+    const qs = (sel, parent) => (parent || document).querySelector(sel);
+    const qsa = (sel, parent) => Array.from((parent || document).querySelectorAll(sel));
+    const makeEl = (tag, attrs, children) => {
+        const n = document.createElement(tag);
+        Object.keys(attrs || {}).forEach(k => {
+            if (k === 'class') n.className = attrs[k];
+            else if (k === 'style' && typeof attrs[k] === 'object') Object.assign(n.style, attrs[k]);
+            else n.setAttribute(k, attrs[k]);
+        });
+        (Array.isArray(children) ? children : (children ? [children] : [])).forEach(c => {
+            if (c == null) return;
+            if (typeof c === 'string' || typeof c === 'number') n.appendChild(document.createTextNode(c));
+            else n.appendChild(c);
+        });
+        return n;
+    };
+
+    const state = {
+        sort: 'price',
+        keyword: '',
+        worldFilter: 'all',
+        typeFilter: 'all',
+        currentTab: 'shops',
+        _scenes: []
+    };
+
+    const MAT_COLORS = {
+        DIAMOND: { main: '#6de4d8', light: '#a6f4ec', dark: '#2d8c84' },
+        IRON_INGOT: { main: '#d9d9d9', light: '#f2f2f2', dark: '#7a7a7a' },
+        GOLD_INGOT: { main: '#fcd95a', light: '#fff0a8', dark: '#b88a1f' },
+        NETHERITE_INGOT: { main: '#5b4a4a', light: '#8d7070', dark: '#2d2020' },
+        QUARTZ: { main: '#efe8dc', light: '#ffffff', dark: '#a69888' },
+        EMERALD: { main: '#27c46a', light: '#6fe4a1', dark: '#127840' }
+    };
+
+    const colorFor = m => MAT_COLORS[m] || { main: '#b0b0b0', light: '#d0d0d0', dark: '#707070' };
+
+    qs('#out').textContent = 'All init OK. THREE exists: ' + (typeof THREE !== 'undefined');
+})(window);
+</script>
+</body>
+</html>

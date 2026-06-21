@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test DB only</title></head>
+<body>
+<h1>Testing DB.js only</h1>
+<script src="../js/db.js"></script>
+<div id="result">Loading...</div>
+<script>
+try {
+  document.getElementById('result').textContent = 'DB loaded OK';
+  document.getElementById('result').style.color = 'green';
+} catch(e) {
+  document.getElementById('result').textContent = 'ERR: ' + e.message;
+  document.getElementById('result').style.color = 'red';
+}
+</script>
+</body>
+</html>

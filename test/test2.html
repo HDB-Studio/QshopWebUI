@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test Button</title></head>
+<body>
+<button id="btn" onclick="document.getElementById('out').textContent='Clicked!'">Click Me</button>
+<div id="out">Initial</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+console.log('Three.js loaded:', typeof THREE !== 'undefined');
+document.getElementById('out').textContent = 'THREE exists: ' + (typeof THREE !== 'undefined');
+</script>
+</body>
+</html>

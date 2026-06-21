@@ -1,0 +1,54 @@
+
+=========== 🔐 渗透测试报告 ===========
+
+[PASS] 首页 /
+       HTTP 200 (期望 200)
+
+[PASS] 敏感文件 .env
+       HTTP 403 (期望 403)
+
+[PASS] 敏感文件 server.js
+       HTTP 403 (期望 403)
+
+[PASS] 敏感文件 package.json
+       HTTP 403 (期望 403)
+
+[PASS] 敏感文件 package-lock.json
+       HTTP 403 (期望 403)
+
+[PASS] 静态资源 css
+       HTTP 200 (期望 200)
+
+[PASS] /api/config
+       HTTP 200 (期望 200)
+
+[PASS] /api/health (不应泄露数据库主机)
+       HTTP 200 (期望 200)
+
+[PASS] XSS Payload
+       HTTP 403 (期望 403)
+
+[PASS] SQL Injection
+       HTTP 403 (期望 403)
+
+[PASS] 路径穿越攻击
+       HTTP 403 (期望 403)
+
+[PASS] 命令注入尝试
+       HTTP 403 (期望 403)
+
+[PASS] PUT /api/settings/admin_password (越权尝试)
+       HTTP 403 (期望 403)
+
+[FAIL] API Token 空绕过
+       HTTP 403 (期望 200)
+       响应: {"success":false,"error":"访问已被安全系统临时阻止，请稍候重试","retry_after":59}
+
+[FAIL] 普通查询 /api/shops
+       HTTP 403 (期望 200)
+       响应: {"success":false,"error":"访问已被安全系统临时阻止，请稍候重试","retry_after":59}
+
+=========== 总结 ===========
+通过: 13 / 15
+失败: 2 / 15
+测试时间: 2026-06-18T15:48:32.857Z

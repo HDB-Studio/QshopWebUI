@@ -1,0 +1,15 @@
+{
+  "exclude": [
+    "node_modules/**",
+    "backups/**",
+    "reports/**",
+    "dist/**",
+    "build/**",
+    "**/*.min.js"
+  ],
+  "concurrency": 8,
+  "output": {
+    "top": 20,
+    "maxIssues": 10
+  }
+}
